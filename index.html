@@ -278,6 +278,9 @@
 // ---- Configuration ----
 const HALF_MIN = 20;
 const OUTFIELD = 4;                            // outfield spots (keeper excluded)
+const MIN_OUTFIELD_MIN = 10;                   // every available player must get
+                                               // at least this many outfield mins
+                                               // (the all-game keeper is exempt)
 
 // The four Woodley United U8 teams. Each has an id (used for storage keys),
 // a display name, an emoji, a colour for the header, and its default squad.
@@ -464,16 +467,24 @@ function buildPlan(present, gk1, gk2, slotMin) {
   const mins = {};
   pool.forEach(i => mins[i] = 0);
 
-  // GK minutes already "banked" — these count toward total for balancing.
-  const gkBanked = {};
-  pool.forEach(i => gkBanked[i] = 0);
-  if (!sameKeeper) {
-    if (pool.includes(gk1)) gkBanked[gk1] += HALF_MIN;
-    if (pool.includes(gk2)) gkBanked[gk2] += HALF_MIN;
-  }
-  // total(i) = outfield so far + goal banked for the whole game.
-  const total = (i) => mins[i] + gkBanked[i];
-  const fairTarget = (OUTFIELD + 1) * totalSlots * slotMin / present.length; // 200/N
+  // Fairness is based on OUTFIELD minutes only — goal time is a separate duty
+  // (rotate the keeper week to week and it evens out over the season). So the
+  // keepers get a full equal share of outfield in the half they're not keeping.
+  const total = (i) => mins[i];
+
+  // Fair outfield target per player: the 4 outfield spots over the whole game,
+  // shared among everyone who plays outfield. In two-keeper mode each keeper is
+  // only "available" for half the slots, so this is an approximation the slot-
+  // by-slot balancing refines; it just steers who gets the next slot.
+  const outfieldSlotUnits = OUTFIELD * totalSlots;      // 32 at 5-min, 16 at 10-min
+  const fairTarget = outfieldSlotUnits * slotMin / pool.length;
+
+  // Minimum outfield SLOTS every available player must get (10 min floor).
+  // At 5-min slots that's 2 slots; at 10-min slots it's 1 slot. Each player in
+  // `pool` is eligible (the all-game keeper isn't in pool, so is exempt).
+  const minSlots = Math.ceil(MIN_OUTFIELD_MIN / slotMin);
+  const slotsPlayed = {};                       // outfield slots played so far
+  pool.forEach(i => slotsPlayed[i] = 0);
 
   const slots = [];
   for (let s = 0; s < totalSlots; s++) {
@@ -495,19 +506,35 @@ function buildPlan(present, gk1, gk2, slotMin) {
       return c;
     };
 
+    // How short of the 10-min floor this player still is (in slots). Positive
+    // means they haven't hit their minimum yet.
+    const needForFloor = (i) => Math.max(0, minSlots - slotsPlayed[i]);
+
+    // "Must play now" to still reach the floor: if the slots they still NEED
+    // equal (or exceed) the chances they have LEFT including this one, they
+    // have to be on now. This guarantees the 10-min minimum where possible.
+    const mustPlayNow = (i) => needForFloor(i) > 0 && needForFloor(i) >= (futureAfter(i) + 1);
+
     // Urgency: how far below the fair target this player would stay if they
     // played ALL their remaining future slots but NOT this one. Higher = must
     // play now (e.g. a 2nd-half keeper whose only outfield chances are in the
     // 1st half). This is what keeps the keepers from being stranded.
     const urgency = (i) => fairTarget - (total(i) + futureAfter(i) * slotMin);
 
-    // Primary: most urgent first. Secondary: lowest current total (fairness).
-    // Then stable by index.
+    // Selection order:
+    //  1. Players who MUST play now to hit their 10-min floor (hard priority).
+    //  2. Then players still below the floor at all (soft priority).
+    //  3. Then most urgent on fair-share, then lowest total, then random.
     const spots = Math.min(OUTFIELD, available.length);
     const chosen = [...available]
-      .sort((a, b) => (urgency(b) - urgency(a)) || (total(a) - total(b)) || (jitter[a] - jitter[b]))
+      .sort((a, b) =>
+        (mustPlayNow(b) - mustPlayNow(a)) ||
+        (needForFloor(b) > 0) - (needForFloor(a) > 0) ||
+        (urgency(b) - urgency(a)) ||
+        (total(a) - total(b)) ||
+        (jitter[a] - jitter[b]))
       .slice(0, spots);
-    chosen.forEach(i => mins[i] += slotMin);
+    chosen.forEach(i => { mins[i] += slotMin; slotsPlayed[i] += 1; });
 
     const bench = available.filter(i => !chosen.includes(i));
     slots.push({ start, end, half, keeper: keeperThisHalf, chosen, bench, sameKeeper });
@@ -625,25 +652,19 @@ function generate() {
     outfield: mins[i] || 0,
     gk: gkMinutes(i),
   }));
-  // Sort by outfield minutes (the thing we balance), most first.
-  rows.sort((a, b) => b.outfield - a.outfield);
+  // Outfield minutes are the thing we balance now; goal time is reference only.
+  rows.forEach(r => r.total = r.outfield + r.gk);
+  // Spread is measured on OUTFIELD minutes among the players who play outfield.
   const ofVals = pool.map(i => mins[i]);
   const maxMin = ofVals.length ? Math.max(...ofVals) : 0;
   const minMin = ofVals.length ? Math.min(...ofVals) : 0;
-
-  // Total minutes (outfield + goal) — the thing balanced in two-keeper mode.
-  rows.forEach(r => r.total = r.outfield + r.gk);
-  const totals = rows.map(r => r.total);
-  const maxTot = Math.max(...totals), minTot = Math.min(...totals);
-  // Re-sort by total minutes, most first.
-  rows.sort((a, b) => b.total - a.total || b.outfield - a.outfield);
+  // Sort by outfield minutes (what we balance), most first.
+  rows.sort((a, b) => b.outfield - a.outfield || b.total - a.total);
 
   const gkLine = sameKeeper
-    ? esc(names[gk1]) + ' plays 40 min in goal (counted separately); the rest share outfield equally.'
-    : 'Two keepers: goal time counts toward each player\u2019s total, so keepers get less outfield to keep totals fair.';
-  const spreadLine = sameKeeper
-    ? 'Outfield spread today: ' + minMin + '\u2013' + maxMin + ' min.'
-    : 'Total-minutes spread today: ' + minTot + '\u2013' + maxTot + ' min.';
+    ? esc(names[gk1]) + ' plays 40 min in goal (separate duty); everyone else shares outfield equally.'
+    : 'Outfield time is shared equally (min 10 min each). Goal time is a separate duty \u2014 rotate the keeper week to week and it evens out over the season.';
+  const spreadLine = 'Outfield spread today: ' + minMin + '\u2013' + maxMin + ' min.';
   html += '<div class="card minutes-card"><h2>Minutes per player</h2>' +
     '<div class="hint">' + spreadLine + ' ' + gkLine + '</div>' +
     '<table><thead><tr><th>Player</th><th class="mins">Outfield</th>' +
