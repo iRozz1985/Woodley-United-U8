@@ -230,7 +230,7 @@
     <div class="hint">Labels the plan so saved or printed sheets are easy to tell apart.</div>
   </div>
 
-  <button class="go" onclick="generate()">Generate rotation plan</button>
+  <button class="go" onclick="generate()">Generate Substitution Plan</button>
   <button class="regen" onclick="generate()">🔀 Regenerate (different plan)</button>
   <div class="btn-row">
     <button class="secondary" onclick="window.print()">🖨️ Print (1 page)</button>
@@ -278,7 +278,7 @@
 // ---- Configuration ----
 const HALF_MIN = 20;
 const OUTFIELD = 4;                            // outfield spots (keeper excluded)
-const MIN_OUTFIELD_MIN = 10;                   // every available player must get
+const MIN_OUTFIELD_MIN = 5;                    // every available player must get
                                                // at least this many outfield mins
                                                // (the all-game keeper is exempt)
 
@@ -479,8 +479,8 @@ function buildPlan(present, gk1, gk2, slotMin) {
   const outfieldSlotUnits = OUTFIELD * totalSlots;      // 32 at 5-min, 16 at 10-min
   const fairTarget = outfieldSlotUnits * slotMin / pool.length;
 
-  // Minimum outfield SLOTS every available player must get (10 min floor).
-  // At 5-min slots that's 2 slots; at 10-min slots it's 1 slot. Each player in
+  // Minimum outfield SLOTS every available player must get (5 min floor).
+  // At 5-min slots that's 1 slot; at 10-min slots it rounds up to 1 slot. Each player in
   // `pool` is eligible (the all-game keeper isn't in pool, so is exempt).
   const minSlots = Math.ceil(MIN_OUTFIELD_MIN / slotMin);
   const slotsPlayed = {};                       // outfield slots played so far
