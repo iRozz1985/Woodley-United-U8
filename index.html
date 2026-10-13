@@ -111,6 +111,10 @@
   .slot-half { color: var(--accent2); font-weight: 600; }
   .mins { text-align: right; }
   .hint { font-size: 0.8rem; color: var(--muted); margin-top: 6px; }
+  .balance-opts { display: flex; flex-direction: column; gap: 10px; }
+  .balance-opt { display: flex; gap: 10px; align-items: flex-start;
+                 font-size: 0.85rem; line-height: 1.35; cursor: pointer; }
+  .balance-opt input { margin-top: 3px; flex: 0 0 auto; }
 
   /* Match-notes block is for the printout only — hidden on screen. */
   #match-notes { display: none; }
@@ -216,7 +220,27 @@
   </div>
 
   <div class="card">
-    <h2>4. Fixture (optional)</h2>
+    <h2>4. Playing-time fairness</h2>
+    <div class="balance-opts">
+      <label class="balance-opt">
+        <input type="radio" name="balanceMode" value="outfield" checked>
+        <span><b>Balance outfield minutes</b> — keepers get a full equal share of
+        outfield; goal time is extra. Rotate the keeper week to week and it evens
+        out over the season.</span>
+      </label>
+      <label class="balance-opt">
+        <input type="radio" name="balanceMode" value="total">
+        <span><b>Balance total minutes</b> — count goal time too, so the keepers
+        get less outfield and everyone&rsquo;s total pitch time is close to equal
+        on the day.</span>
+      </label>
+    </div>
+    <div class="hint">With one keeper all game this makes no difference. It only
+      changes things when you use two keepers.</div>
+  </div>
+
+  <div class="card">
+    <h2>5. Fixture (optional)</h2>
     <div class="gk-row" style="display:flex; gap:12px; flex-wrap:wrap;">
       <div style="flex:2; min-width:160px;">
         <label>Opponent</label>
@@ -440,15 +464,22 @@ function refreshKeeperOptions() {
   });
 }
 
-// ---- Rotation: balance TOTAL minutes (outfield + goal) across everyone ----
+// ---- Rotation: balance playing time across everyone ----
 // gk1 keeps the 1st half, gk2 the 2nd. If gk1 === gk2 it's one keeper all game.
 //
+// balanceMode controls what "fair" means:
+//   "outfield" — balance OUTFIELD minutes only. Goal time is a separate duty;
+//     keepers get a full equal share of outfield in the half they're not keeping.
+//     (Rotate the keeper week to week and goal time evens out over a season.)
+//   "total" — balance TOTAL minutes (outfield + goal). The two keepers bank
+//     20 min each in goal, so they get LESS outfield to compensate and everyone
+//     ends up near-equal on total pitch time.
+//
 // One keeper (gk1 === gk2): that player is out of the outfield pool entirely and
-//   plays 40 min in goal; the rest share the 4 outfield spots equally.
-// Two keepers: each banks 20 min in goal, so we balance on TOTAL minutes — the
-//   keepers get LESS outfield time to compensate, and everyone ends up near-equal
-//   on total pitch time.
-function buildPlan(present, gk1, gk2, slotMin) {
+//   plays 40 min in goal; the rest share the 4 outfield spots equally. (The mode
+//   makes no practical difference with a single all-game keeper.)
+function buildPlan(present, gk1, gk2, slotMin, balanceMode) {
+  balanceMode = (balanceMode === "total") ? "total" : "outfield";
   const slotsPerHalf = HALF_MIN / slotMin;      // 4 (5 min) or 2 (10 min)
   const totalSlots = slotsPerHalf * 2;
   const sameKeeper = (gk1 === gk2);
@@ -467,17 +498,31 @@ function buildPlan(present, gk1, gk2, slotMin) {
   const mins = {};
   pool.forEach(i => mins[i] = 0);
 
-  // Fairness is based on OUTFIELD minutes only — goal time is a separate duty
-  // (rotate the keeper week to week and it evens out over the season). So the
-  // keepers get a full equal share of outfield in the half they're not keeping.
-  const total = (i) => mins[i];
+  // Goal minutes each pool player is banking over the whole game (fixed up
+  // front): in two-keeper mode gk1 and gk2 each do 20 in goal; everyone else 0.
+  // (In one-keeper mode the keeper isn't in the pool, so all banked = 0 here.)
+  const gkBanked = {};
+  pool.forEach(i => gkBanked[i] = (i === gk1 ? HALF_MIN : 0) + (i === gk2 ? HALF_MIN : 0));
 
-  // Fair outfield target per player: the 4 outfield spots over the whole game,
-  // shared among everyone who plays outfield. In two-keeper mode each keeper is
-  // only "available" for half the slots, so this is an approximation the slot-
-  // by-slot balancing refines; it just steers who gets the next slot.
+  // What we balance depends on the mode:
+  //   "outfield" — fairness on OUTFIELD minutes only (goal time is extra duty).
+  //   "total"    — fairness on TOTAL minutes, so a keeper's banked goal time
+  //                counts and they get correspondingly less outfield.
+  const total = (balanceMode === "total")
+    ? (i) => mins[i] + gkBanked[i]
+    : (i) => mins[i];
+
+  // Fair target per player.
+  //   outfield mode: the 4 outfield spots over the game, shared by the pool.
+  //   total mode:    all pitch time (outfield spots + the 2 goal "spots" = the
+  //                  keeper slots) shared by the pool, i.e. everyone's fair
+  //                  share of TOTAL minutes.
   const outfieldSlotUnits = OUTFIELD * totalSlots;      // 32 at 5-min, 16 at 10-min
-  const fairTarget = outfieldSlotUnits * slotMin / pool.length;
+  const goalSlotUnits = sameKeeper ? 0 : totalSlots;    // 2 keepers => goal is shared pitch time
+  const slotUnits = (balanceMode === "total")
+    ? outfieldSlotUnits + goalSlotUnits
+    : outfieldSlotUnits;
+  const fairTarget = slotUnits * slotMin / pool.length;
 
   // Minimum outfield SLOTS every available player must get (5 min floor).
   // At 5-min slots that's 1 slot; at 10-min slots it rounds up to 1 slot. Each player in
@@ -539,7 +584,7 @@ function buildPlan(present, gk1, gk2, slotMin) {
     const bench = available.filter(i => !chosen.includes(i));
     slots.push({ start, end, half, keeper: keeperThisHalf, chosen, bench, sameKeeper });
   }
-  return { slots, mins, pool, sameKeeper };
+  return { slots, mins, pool, sameKeeper, balanceMode };
 }
 
 function fmt(m) { return m + "'"; }
@@ -560,7 +605,9 @@ function generate() {
   if (isNaN(gk1) || isNaN(gk2)) { err.textContent = "Please choose the goalkeeper(s)."; return; }
 
   const slotMin = parseInt(document.getElementById("interval").value, 10);
-  const { slots, mins, pool, sameKeeper } = buildPlan(present, gk1, gk2, slotMin);
+  const balanceModeEl = document.querySelector('input[name="balanceMode"]:checked');
+  const balanceMode = balanceModeEl ? balanceModeEl.value : "outfield";
+  const { slots, mins, pool, sameKeeper } = buildPlan(present, gk1, gk2, slotMin, balanceMode);
 
   // --- Fixture label (opponent / date) ---
   const opponent = (document.getElementById("opponent").value || "").trim();
@@ -652,19 +699,32 @@ function generate() {
     outfield: mins[i] || 0,
     gk: gkMinutes(i),
   }));
-  // Outfield minutes are the thing we balance now; goal time is reference only.
   rows.forEach(r => r.total = r.outfield + r.gk);
-  // Spread is measured on OUTFIELD minutes among the players who play outfield.
-  const ofVals = pool.map(i => mins[i]);
-  const maxMin = ofVals.length ? Math.max(...ofVals) : 0;
-  const minMin = ofVals.length ? Math.min(...ofVals) : 0;
-  // Sort by outfield minutes (what we balance), most first.
-  rows.sort((a, b) => b.outfield - a.outfield || b.total - a.total);
 
-  const gkLine = sameKeeper
-    ? esc(names[gk1]) + ' plays 40 min in goal (separate duty); everyone else shares outfield equally.'
-    : 'Outfield time is shared equally (min 10 min each). Goal time is a separate duty \u2014 rotate the keeper week to week and it evens out over the season.';
-  const spreadLine = 'Outfield spread today: ' + minMin + '\u2013' + maxMin + ' min.';
+  // What we balanced depends on the chosen mode. Measure the spread on that same
+  // quantity (among the players it applies to) and word the note accordingly.
+  const balanceTotal = (balanceMode === "total");
+  const spreadVals = balanceTotal
+    ? pool.map(i => (mins[i] || 0) + ((i === gk1 ? HALF_MIN : 0) + (i === gk2 ? HALF_MIN : 0)))
+    : pool.map(i => mins[i]);
+  const maxMin = spreadVals.length ? Math.max(...spreadVals) : 0;
+  const minMin = spreadVals.length ? Math.min(...spreadVals) : 0;
+  // Sort by whatever we balanced, most first.
+  rows.sort((a, b) => balanceTotal
+    ? (b.total - a.total || b.outfield - a.outfield)
+    : (b.outfield - a.outfield || b.total - a.total));
+
+  let gkLine, spreadLine;
+  if (sameKeeper) {
+    gkLine = esc(names[gk1]) + ' plays 40 min in goal (separate duty); everyone else shares outfield equally.';
+    spreadLine = 'Outfield spread today: ' + minMin + '\u2013' + maxMin + ' min.';
+  } else if (balanceTotal) {
+    gkLine = 'Balancing TOTAL minutes: the keepers get less outfield to make up for their 20 min in goal, so everyone\u2019s total pitch time is close to equal.';
+    spreadLine = 'Total-minutes spread today: ' + minMin + '\u2013' + maxMin + ' min.';
+  } else {
+    gkLine = 'Balancing OUTFIELD minutes: outfield time is shared equally (min ' + MIN_OUTFIELD_MIN + ' min each). Goal time is a separate duty \u2014 rotate the keeper week to week and it evens out over the season.';
+    spreadLine = 'Outfield spread today: ' + minMin + '\u2013' + maxMin + ' min.';
+  }
   html += '<div class="card minutes-card"><h2>Minutes per player</h2>' +
     '<div class="hint">' + spreadLine + ' ' + gkLine + '</div>' +
     '<table><thead><tr><th>Player</th><th class="mins">Outfield</th>' +
