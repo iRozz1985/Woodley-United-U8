@@ -115,6 +115,9 @@
   .balance-opt { display: flex; gap: 10px; align-items: flex-start;
                  font-size: 0.85rem; line-height: 1.35; cursor: pointer; }
   .balance-opt input { margin-top: 3px; flex: 0 0 auto; }
+  .subpick-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 6px 12px; }
+  .subpick { display: flex; gap: 8px; align-items: center; font-size: 0.9rem; cursor: pointer; }
+  .subpick input { flex: 0 0 auto; }
 
   /* Match-notes block is for the printout only — hidden on screen. */
   #match-notes { display: none; }
@@ -195,11 +198,11 @@
     <div class="gk-row" style="display:flex; gap:12px; flex-wrap:wrap;">
       <div style="flex:1; min-width:140px;">
         <label>1st half keeper</label>
-        <select id="gk1"></select>
+        <select id="gk1" onchange="refreshStartingSubs()"></select>
       </div>
       <div style="flex:1; min-width:140px;">
         <label>2nd half keeper</label>
-        <select id="gk2"></select>
+        <select id="gk2" onchange="refreshStartingSubs()"></select>
       </div>
     </div>
     <div class="hint">Pick the <b>same player in both</b> for one keeper all game, or
@@ -252,6 +255,15 @@
       </div>
     </div>
     <div class="hint">Labels the plan so saved or printed sheets are easy to tell apart.</div>
+  </div>
+
+  <div class="card">
+    <h2>6. Starting substitutes (optional)</h2>
+    <div class="hint" style="margin-top:0; margin-bottom:8px;">Tick anyone you want
+      to <b>start on the bench</b> (out for the first part of the game) so you can
+      give different players a start each week. They rejoin the rotation straight
+      after and still get their fair share of minutes.</div>
+    <div id="startSubs" class="subpick-grid"></div>
   </div>
 
   <button class="go" onclick="generate()">Generate Substitution Plan</button>
@@ -462,6 +474,47 @@ function refreshKeeperOptions() {
     });
     if (present.map(String).includes(prev)) sel.value = prev;
   });
+  refreshStartingSubs();
+}
+
+// Build the "who starts on the bench" checkboxes. Candidates = present players
+// who aren't a keeper (a keeper is on the pitch in goal, so can't be a starting
+// sub). We preserve any still-valid ticks when the list is rebuilt.
+function refreshStartingSubs() {
+  const box = document.getElementById("startSubs");
+  if (!box) return;
+  const present = presentIndexes();
+  const gk1 = parseInt(document.getElementById("gk1").value, 10);
+  const gk2 = parseInt(document.getElementById("gk2").value, 10);
+  const prev = getStartingSubs();                 // keep current ticks if still valid
+  const candidates = present.filter(i => i !== gk1 && i !== gk2);
+
+  box.innerHTML = "";
+  if (candidates.length === 0) {
+    box.innerHTML = "<div class='hint'>Pick the players and keeper(s) first.</div>";
+    return;
+  }
+  candidates.forEach(i => {
+    const label = document.createElement("label");
+    label.className = "subpick";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.className = "startsub-cb";
+    cb.value = i;
+    if (prev.includes(i)) cb.checked = true;
+    const span = document.createElement("span");
+    span.textContent = names[i];
+    label.appendChild(cb);
+    label.appendChild(span);
+    box.appendChild(label);
+  });
+}
+
+// The player indexes currently ticked as starting substitutes.
+function getStartingSubs() {
+  return Array.from(document.querySelectorAll(".startsub-cb"))
+    .filter(cb => cb.checked)
+    .map(cb => parseInt(cb.value, 10));
 }
 
 // ---- Rotation: balance playing time across everyone ----
@@ -478,8 +531,14 @@ function refreshKeeperOptions() {
 // One keeper (gk1 === gk2): that player is out of the outfield pool entirely and
 //   plays 40 min in goal; the rest share the 4 outfield spots equally. (The mode
 //   makes no practical difference with a single all-game keeper.)
-function buildPlan(present, gk1, gk2, slotMin, balanceMode) {
+// `startingSubs` (optional) is a list of player indexes you want to START on the
+// bench — i.e. kept out of the FIRST slot so you can vary who starts each week.
+// They rejoin the normal fair rotation immediately after, and the balancing
+// gives them their minutes back over the rest of the game. Any you pick that
+// can't sit out (e.g. a keeper, or too many to leave 4 on the pitch) are ignored.
+function buildPlan(present, gk1, gk2, slotMin, balanceMode, startingSubs) {
   balanceMode = (balanceMode === "total") ? "total" : "outfield";
+  const startSubSet = new Set(startingSubs || []);
   const slotsPerHalf = HALF_MIN / slotMin;      // 4 (5 min) or 2 (10 min)
   const totalSlots = slotsPerHalf * 2;
   const sameKeeper = (gk1 === gk2);
@@ -539,7 +598,21 @@ function buildPlan(present, gk1, gk2, slotMin, balanceMode) {
     const end = start + slotMin;
 
     // Available outfielders this slot = pool minus whoever is keeping this half.
-    const available = pool.filter(i => i !== keeperThisHalf);
+    let available = pool.filter(i => i !== keeperThisHalf);
+
+    // Starting subs: for the FIRST slot only, hold back the players you nominated
+    // to start on the bench — but never hold back so many that fewer than the 4
+    // outfield spots remain. If you nominate too many, only as many as can sit
+    // out (keeping 4 on the pitch) are benched; the rest start as normal.
+    if (s === 0 && startSubSet.size) {
+      const canBench = Math.max(0, available.length - OUTFIELD);
+      let benched = 0;
+      const held = available.filter(i => {
+        if (startSubSet.has(i) && benched < canBench) { benched++; return false; }
+        return true;
+      });
+      available = held;
+    }
 
     // Outfield slots this player could still play AFTER this one.
     const futureAfter = (i) => {
@@ -607,7 +680,8 @@ function generate() {
   const slotMin = parseInt(document.getElementById("interval").value, 10);
   const balanceModeEl = document.querySelector('input[name="balanceMode"]:checked');
   const balanceMode = balanceModeEl ? balanceModeEl.value : "outfield";
-  const { slots, mins, pool, sameKeeper } = buildPlan(present, gk1, gk2, slotMin, balanceMode);
+  const startingSubs = getStartingSubs();
+  const { slots, mins, pool, sameKeeper } = buildPlan(present, gk1, gk2, slotMin, balanceMode, startingSubs);
 
   // --- Fixture label (opponent / date) ---
   const opponent = (document.getElementById("opponent").value || "").trim();
@@ -979,7 +1053,10 @@ function clearData() {
     return;
   }
   renderSquad(false);                 // rebuild squad list with nobody ticked
+                                      // (also clears keeper + starting-sub lists)
   document.getElementById("interval").value = "5";   // back to default interval
+  const defMode = document.querySelector('input[name="balanceMode"][value="outfield"]');
+  if (defMode) defMode.checked = true;               // back to default fairness mode
   // keeper dropdowns are rebuilt empty by renderSquad(false) since no one is present
   document.getElementById("opponent").value = "";
   document.getElementById("matchdate").value = "";
