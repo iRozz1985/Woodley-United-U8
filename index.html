@@ -121,9 +121,11 @@
 
   /* Match-notes block is for the printout only — hidden on screen. */
   #match-notes { display: none; }
-  .notes-table td { padding: 6px; }
+  .notes-table { border-collapse: collapse; }
+  .notes-table th, .notes-table td { padding: 6px; text-align: left; }
+  .notes-team { font-weight: 700; }
   .notes-label { color: var(--muted); white-space: nowrap; }
-  .notes-blank { border-bottom: 1px solid var(--line); }
+  .notes-blank { border-bottom: 1px solid var(--line); min-width: 90px; }
   .scorer-box { border: 1px solid var(--line); height: 120px; border-radius: 4px; }
 
   /* ---- Print: fit the generated plan onto one A4 page ---- */
@@ -166,6 +168,7 @@
     }
     #match-notes h2 { font-size: 11pt; margin: 0 0 4px; }
     .notes-label { color: #000; }
+    .notes-team { color: #000; }
     .notes-blank { border-bottom: 1px solid #000; }
     .scorer-box { border: 1px solid #000; height: 120px; border-radius: 0; }
   }
@@ -292,18 +295,25 @@
     <div class="card">
       <h2>Match notes</h2>
       <table class="notes-table">
-        <tr>
-          <td class="notes-label">Half-time score</td>
-          <td class="notes-blank"><span class="us-team">Spitfires</span>&nbsp;_____</td>
-          <td class="notes-label">Opponents</td>
-          <td class="notes-blank">_____</td>
-        </tr>
-        <tr>
-          <td class="notes-label">Full-time score</td>
-          <td class="notes-blank"><span class="us-team">Spitfires</span>&nbsp;_____</td>
-          <td class="notes-label">Opponents</td>
-          <td class="notes-blank">_____</td>
-        </tr>
+        <thead>
+          <tr>
+            <th></th>
+            <th class="notes-label">Half-time score</th>
+            <th class="notes-label">Full-time score</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="notes-team us-team">Spitfires</td>
+            <td class="notes-blank">_____</td>
+            <td class="notes-blank">_____</td>
+          </tr>
+          <tr>
+            <td class="notes-team opp-team">Opponents</td>
+            <td class="notes-blank">_____</td>
+            <td class="notes-blank">_____</td>
+          </tr>
+        </tbody>
       </table>
       <h2 style="margin-top:10px;">Goalscorers</h2>
       <div class="scorer-box"></div>
@@ -597,21 +607,23 @@ function buildPlan(present, gk1, gk2, slotMin, balanceMode, startingSubs) {
     const start = s * slotMin;
     const end = start + slotMin;
 
-    // Available outfielders this slot = pool minus whoever is keeping this half.
-    let available = pool.filter(i => i !== keeperThisHalf);
+    // Everyone who could play outfield this slot = pool minus this half's keeper.
+    // The BENCH is always worked out from this full set, so a held-back starting
+    // sub still shows up on the bench (not just vanishing).
+    const fullAvailable = pool.filter(i => i !== keeperThisHalf);
 
-    // Starting subs: for the FIRST slot only, hold back the players you nominated
-    // to start on the bench — but never hold back so many that fewer than the 4
-    // outfield spots remain. If you nominate too many, only as many as can sit
-    // out (keeping 4 on the pitch) are benched; the rest start as normal.
+    // `available` is who we actually PICK from. For the FIRST slot only, hold
+    // back the players you nominated to start on the bench — but never hold back
+    // so many that fewer than the 4 outfield spots remain. If you nominate too
+    // many, only as many as can sit out (keeping 4 on the pitch) are benched.
+    let available = fullAvailable;
     if (s === 0 && startSubSet.size) {
-      const canBench = Math.max(0, available.length - OUTFIELD);
+      const canBench = Math.max(0, fullAvailable.length - OUTFIELD);
       let benched = 0;
-      const held = available.filter(i => {
+      available = fullAvailable.filter(i => {
         if (startSubSet.has(i) && benched < canBench) { benched++; return false; }
         return true;
       });
-      available = held;
     }
 
     // Outfield slots this player could still play AFTER this one.
@@ -654,7 +666,9 @@ function buildPlan(present, gk1, gk2, slotMin, balanceMode, startingSubs) {
       .slice(0, spots);
     chosen.forEach(i => { mins[i] += slotMin; slotsPlayed[i] += 1; });
 
-    const bench = available.filter(i => !chosen.includes(i));
+    // Bench = everyone who could have played outfield this slot but isn't on.
+    // Using fullAvailable means held-back starting subs appear here correctly.
+    const bench = fullAvailable.filter(i => !chosen.includes(i));
     slots.push({ start, end, half, keeper: keeperThisHalf, chosen, bench, sameKeeper });
   }
   return { slots, mins, pool, sameKeeper, balanceMode };
@@ -699,6 +713,12 @@ function generate() {
     printTitle.textContent = fixtureLabel || "";
     printTitle.dataset.has = fixtureLabel ? "1" : "";
   }
+
+  // Put the opponent name (if entered) at the head of the opponent column in
+  // the printable match-notes; fall back to "Opponents" when none is given.
+  document.querySelectorAll(".opp-team").forEach(el => {
+    el.textContent = opponent || "Opponents";
+  });
 
   // --- Rotation table ---
   const gkNote = sameKeeper
