@@ -487,17 +487,19 @@ function refreshKeeperOptions() {
   refreshStartingSubs();
 }
 
-// Build the "who starts on the bench" checkboxes. Candidates = present players
-// who aren't a keeper (a keeper is on the pitch in goal, so can't be a starting
-// sub). We preserve any still-valid ticks when the list is rebuilt.
+// Build the "who starts on the bench" checkboxes. A player can be a starting
+// sub if they're on the PITCH at kick-off, i.e. not in goal for the first half.
+// So we only exclude the 1st-half keeper (gk1). The 2nd-half keeper (gk2) plays
+// outfield in the first half, so they CAN start on the bench. With one keeper
+// all game (gk1 === gk2) that player is always in goal, so they're excluded too.
+// We preserve any still-valid ticks when the list is rebuilt.
 function refreshStartingSubs() {
   const box = document.getElementById("startSubs");
   if (!box) return;
   const present = presentIndexes();
   const gk1 = parseInt(document.getElementById("gk1").value, 10);
-  const gk2 = parseInt(document.getElementById("gk2").value, 10);
   const prev = getStartingSubs();                 // keep current ticks if still valid
-  const candidates = present.filter(i => i !== gk1 && i !== gk2);
+  const candidates = present.filter(i => i !== gk1);
 
   box.innerHTML = "";
   if (candidates.length === 0) {
