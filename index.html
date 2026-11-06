@@ -193,7 +193,9 @@
   <div class="card">
     <h2>1. Squad — tick who's playing</h2>
     <div id="squad"></div>
-    <div class="hint">Tap a name to rename a player. Names are saved on this device.</div>
+    <div class="hint">Tap a name to rename a player. Names are saved on this device.
+      League rules: up to 10 players registered per team, with a maximum of 8
+      in the match day squad, so only 8 can be ticked.</div>
   </div>
 
   <div class="card">
@@ -324,6 +326,8 @@
 // ---- Configuration ----
 const HALF_MIN = 20;
 const OUTFIELD = 4;                            // outfield spots (keeper excluded)
+const MAX_REGISTERED = 10;                     // league: players registered per team
+const MAX_MATCHDAY = 8;                        // league: match day squad limit
 const MIN_OUTFIELD_MIN = 5;                    // every available player must get
                                                // at least this many outfield mins
                                                // (the all-game keeper is exempt)
@@ -336,7 +340,7 @@ const TEAMS = [
     name: "Woodley United U8 Spitfires",
     emoji: "✈️",
     colour: "#4ec3ff",   // sky blue
-    squad: ["Cayden","Daxton","Eli","Harry","Henry","Heyaan","Jack","Logan"],
+    squad: ["Cayden","Daxton","Eli","Harry","Henry","Heyaan","Jack","Logan","Vivvan"],
   },
   {
     id: "hurricanes",
@@ -385,6 +389,12 @@ function loadNames() {
   try {
     const saved = JSON.parse(localStorage.getItem(squadKey(currentTeam)));
     if (Array.isArray(saved) && saved.length === team.squad.length) return saved;
+    // A newer default squad has extra players (e.g. a new signing). Keep any
+    // names already saved/renamed and append the new defaults, rather than
+    // throwing the saved names away.
+    if (Array.isArray(saved) && saved.length > 0 && saved.length < team.squad.length) {
+      return saved.concat(team.squad.slice(saved.length));
+    }
   } catch (e) {}
   return [...team.squad];
 }
@@ -443,9 +453,22 @@ function renderSquad(allChecked = true) {
     row.className = "player";
     const cb = document.createElement("input");
     cb.type = "checkbox";
-    cb.checked = allChecked;
+    // Tick everyone by default, but never more than the match day limit: with a
+    // bigger squad the first MAX_MATCHDAY are ticked and you choose who sits out.
+    cb.checked = allChecked && i < MAX_MATCHDAY;
     cb.id = "present" + i;
-    cb.addEventListener("change", refreshKeeperOptions);
+    cb.addEventListener("change", () => {
+      // Enforce the league's match day squad limit.
+      if (cb.checked && presentIndexes().length > MAX_MATCHDAY) {
+        cb.checked = false;
+        document.getElementById("error").textContent =
+          "League rules allow a maximum of " + MAX_MATCHDAY +
+          " players in the match day squad. Untick someone first.";
+      } else {
+        document.getElementById("error").textContent = "";
+      }
+      refreshKeeperOptions();
+    });
     const input = document.createElement("input");
     input.className = "pname";
     input.value = name;
@@ -685,6 +708,11 @@ function generate() {
   out.innerHTML = "";
 
   const present = presentIndexes();
+  if (present.length > MAX_MATCHDAY) {
+    err.textContent = "League rules allow a maximum of " + MAX_MATCHDAY +
+      " players in the match day squad. You have " + present.length + " ticked.";
+    return;
+  }
   if (present.length < 5) {
     err.textContent = "You need at least 5 players present for 5-a-side. Currently " + present.length + ".";
     return;
