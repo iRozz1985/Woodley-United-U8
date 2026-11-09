@@ -437,6 +437,7 @@ function switchTeam() {
   renderSquad();              // all ticked for the new team
   loadFixture();
   updateMatchNotesTeam();
+  refreshPrintFixture();
   renderHistory();
   document.getElementById("output").innerHTML = "";
   document.getElementById("error").textContent = "";
@@ -736,19 +737,8 @@ function generate() {
   if (matchdate) fixtureParts.push(formatDate(matchdate));
   const fixtureLabel = fixtureParts.join("  ·  ");
 
-  // Printable fixture line (opponent / date). The team name already prints via
-  // the .team header, so we only show the fixture details here — nothing if none.
-  const printTitle = document.getElementById("print-title");
-  if (printTitle) {
-    printTitle.textContent = fixtureLabel || "";
-    printTitle.dataset.has = fixtureLabel ? "1" : "";
-  }
-
-  // Put the opponent name (if entered) at the head of the opponent column in
-  // the printable match-notes; fall back to "Opponents" when none is given.
-  document.querySelectorAll(".opp-team").forEach(el => {
-    el.textContent = opponent || "Opponents";
-  });
+  // Printable fixture line + opponent name in the match notes.
+  refreshPrintFixture();
 
   // --- Rotation table ---
   const gkNote = sameKeeper
@@ -962,6 +952,28 @@ function loadFixture() {
     }
   } catch (e) {}
 }
+// Update everything that prints from the CURRENT opponent/date fields: the
+// fixture line at the top of the printout and the opponent column heading in
+// the match notes. Called when the fields change, before printing, on load and
+// from generate(), so the print never shows stale values.
+function refreshPrintFixture() {
+  const opponent = (document.getElementById("opponent").value || "").trim();
+  const matchdate = document.getElementById("matchdate").value || "";
+  const parts = [];
+  if (opponent) parts.push("vs " + opponent);
+  if (matchdate) parts.push(formatDate(matchdate));
+  const label = parts.join("  ·  ");
+
+  const printTitle = document.getElementById("print-title");
+  if (printTitle) {
+    printTitle.textContent = label;
+    printTitle.dataset.has = label ? "1" : "";
+  }
+  document.querySelectorAll(".opp-team").forEach(el => {
+    el.textContent = opponent || "Opponents";
+  });
+}
+
 function formatDate(iso) {
   // iso is "YYYY-MM-DD"; show as "Sat 11 Oct 2026".
   const d = new Date(iso + "T00:00:00");
@@ -1111,6 +1123,7 @@ function clearData() {
   document.getElementById("opponent").value = "";
   document.getElementById("matchdate").value = "";
   localStorage.removeItem(fixtureKey(currentTeam));
+  refreshPrintFixture();
   document.getElementById("output").innerHTML = "";
   document.getElementById("error").textContent = "";
   lastPlanText = "";
@@ -1135,6 +1148,16 @@ initTeamUI();
 renderSquad();
 loadFixture();
 updateMatchNotesTeam();
+refreshPrintFixture();
+
+// Keep the printout in step with the fixture fields as you type or pick a date,
+// and refresh once more right before the print dialog opens.
+["opponent", "matchdate"].forEach(id => {
+  const el = document.getElementById(id);
+  el.addEventListener("input", refreshPrintFixture);
+  el.addEventListener("change", refreshPrintFixture);
+});
+window.addEventListener("beforeprint", refreshPrintFixture);
 renderHistory();
 </script>
 </body>
